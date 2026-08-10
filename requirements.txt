@@ -18,6 +18,7 @@ peewee==4.3.0
 pillow==12.3.0
 platformdirs==4.11.1
 protobuf==7.35.1
+pyarrow==25.0.0
 pycparser==3.0
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0

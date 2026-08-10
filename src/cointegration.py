@@ -167,6 +167,10 @@ def screen_pairs(
             "direction": eg_result["winning_direction"],
         })
 
+    columns = ["ticker_a", "ticker_b", "eg_pvalue", "eg_threshold_used", "beta", "alpha", "direction"]
+    if not candidates:
+        return pd.DataFrame(columns=columns)
+
     return pd.DataFrame(candidates).sort_values("eg_pvalue").reset_index(drop=True)
 
 

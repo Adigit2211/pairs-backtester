@@ -69,6 +69,58 @@ def generate_walk_forward_windows(start_date, end_date, formation_months=12, tra
     return windows
 
 
+def extract_trades(net_daily_returns: pd.Series, position: pd.Series):
+    """
+    Reconstructs individual trades from a daily position series and its
+    corresponding net daily returns, so we can compute a per-TRADE win rate
+    (not just a per-day one).
+
+    We use the exact same "applied_position" (position shifted by one day)
+    that _pair_return_series used to compute net_daily_returns, so the
+    trade's date range lines up precisely with the days that actually
+    earned that trade's returns.
+
+    Returns a list of dicts, one per trade, with entry/exit dates and the
+    trade's total compounded return.
+    """
+    applied_position = position.shift(1).fillna(0)
+    trades = []
+
+    in_trade = False
+    trade_dates = []
+
+    for date, pos in applied_position.items():
+        if pos != 0 and not in_trade:
+            in_trade = True
+            trade_dates = [date]
+        elif pos != 0 and in_trade:
+            trade_dates.append(date)
+        elif pos == 0 and in_trade:
+            trade_return = (1 + net_daily_returns.loc[trade_dates]).prod() - 1
+            trades.append({
+                "entry_date": trade_dates[0],
+                "exit_date": trade_dates[-1],
+                "num_days": len(trade_dates),
+                "trade_return": trade_return,
+            })
+            in_trade = False
+            trade_dates = []
+
+    # If we're still in a trade at the very end of the window, close it out
+    # using whatever days we have (it'll get picked up fresh in the next
+    # window if the relationship is still being screened for).
+    if in_trade and trade_dates:
+        trade_return = (1 + net_daily_returns.loc[trade_dates]).prod() - 1
+        trades.append({
+            "entry_date": trade_dates[0],
+            "exit_date": trade_dates[-1],
+            "num_days": len(trade_dates),
+            "trade_return": trade_return,
+        })
+
+    return trades
+
+
 def _pair_return_series(price_a, price_b, beta, position, cost_bps):
     """
     Converts a position series (+1/0/-1) for one pair into a daily
@@ -122,6 +174,7 @@ def run_walk_forward(
 
     all_daily_returns = []
     pair_log = []
+    trade_log = []
 
     for w in windows:
         formation_prices = prices.loc[w["formation_start"]:w["formation_end"]]
@@ -155,6 +208,14 @@ def run_walk_forward(
             )
             window_pair_returns.append(pair_returns)
 
+            for trade in extract_trades(pair_returns, signals["position"]):
+                trade_log.append({
+                    "ticker_a": col_a,
+                    "ticker_b": col_b,
+                    "trading_start": w["trading_start"].date(),
+                    **trade,
+                })
+
             pair_log.append({
                 "formation_start": w["formation_start"].date(),
                 "trading_start": w["trading_start"].date(),
@@ -175,7 +236,7 @@ def run_walk_forward(
     daily_returns = pd.concat(all_daily_returns).sort_index()
     daily_returns = daily_returns[~daily_returns.index.duplicated(keep="first")]
 
-    return daily_returns, pd.DataFrame(pair_log)
+    return daily_returns, pd.DataFrame(pair_log), pd.DataFrame(trade_log)
 
 
 if __name__ == "__main__":
@@ -186,7 +247,7 @@ if __name__ == "__main__":
     print("Running walk-forward backtest (screens cointegration fresh at")
     print("every quarterly step -- this can take a minute or two)...\n")
 
-    daily_returns, pair_log = run_walk_forward(prices)
+    daily_returns, pair_log, trade_log = run_walk_forward(prices)
 
     print(f"Backtest covers {daily_returns.index.min().date()} to {daily_returns.index.max().date()}")
     print(f"({len(daily_returns)} trading days)\n")
